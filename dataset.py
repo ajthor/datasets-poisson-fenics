@@ -1,35 +1,20 @@
 """
-TEMPLATE: Dataset class for PDE simulation datasets.
+2D Poisson equation with Dirichlet boundary conditions.
 
-INSTRUCTIONS FOR CLAUDE:
-1. Replace this docstring with equation-specific description
-2. Add equation in mathematical notation (LaTeX format preferred)
-3. Describe the physical system being simulated
-4. Import the necessary libraries for your PDE solver below
+Solves: -∇²u = f
+where u(x,y) is the solution field and f(x,y) is the source term.
 
-Example docstrings:
-- "2D Heat equation with Dirichlet boundary conditions"
-- "1D Wave equation with periodic boundaries"
-- "2D Navier-Stokes equations in a lid-driven cavity"
+Physical system: Steady-state diffusion in a 2D rectangular domain with
+zero boundary conditions and random source distributions.
 """
 
 import numpy as np
 from torch.utils.data import IterableDataset
 
-# TODO: Import your PDE solver library here
-# Examples:
-# import dedalus.public as d3  # For spectral methods
-# import jax.numpy as jnp; from jax import jit  # For JAX-based solvers
-# import torch  # For neural PDE solvers
-# from scipy.integrate import solve_ivp  # For scipy ODE solvers
-
+import fenics as fe
+from functools import partial
+from sklearn.metrics.pairwise import rbf_kernel
 import logging
-
-# TODO: Import additional utilities as needed
-# Examples:
-# from functools import partial
-# from sklearn.metrics.pairwise import rbf_kernel  # For GP initial conditions
-# import scipy.sparse as sp  # For sparse matrices
 
 logger = logging.getLogger(__name__)
 
@@ -104,100 +89,58 @@ def sample_gp_posterior(kernel, X, y, xt, n_samples=1):
 # - Heat source/sink generators for thermal problems
 
 
-class YourDataset(IterableDataset):
+class PoissonDataset(IterableDataset):
     """
-    INSTRUCTIONS FOR CLAUDE:
-    1. Rename this class to match your PDE (e.g., HeatEquationDataset, WaveDataset, NavierStokesDataset)
-    2. Update this docstring with your equation description and mathematical form
-    3. Keep the same __init__ signature pattern but replace parameters with your PDE-specific ones
+    Dataset for 2D Poisson equation simulations with Dirichlet boundary conditions.
+    Solves: -∇²u = f with u=0 on boundaries
     """
     def __init__(
         self,
-        # TODO: Replace these parameters with your PDE-specific parameters
-        # Keep similar structure: domain_size, grid_points, equation_parameters, solver_parameters
-        # 
-        # Example parameter patterns:
-        # Domain parameters:
-        Lx=10,                    # Domain length/width (or Lx, Ly for 2D)  
-        Nx=1024,                  # Grid points (or Nx, Ny for 2D)
-        # 
-        # PDE-specific parameters (replace a, b with your equation coefficients):
-        # diffusion_coeff=1e-4,   # Diffusion/viscosity coefficient
-        # wave_speed=1.0,         # Wave speed for hyperbolic equations
-        # source_strength=0.1,    # Source term strength
-        # boundary_conditions="periodic",  # Boundary condition type
-        # 
-        # Solver parameters:
-        # dealias=3/2,            # Dealiasing factor (for spectral methods)
-        stop_sim_time=10,         # Final simulation time
-        timestep=2e-3,           # Time step size  
-        # timestepper=...,        # Time integration scheme (solver-specific)
+        # Domain parameters
+        Lx=1.0,                   # Domain width
+        Ly=1.0,                   # Domain height
+        Nx=32,                    # Grid points in x
+        Ny=32,                    # Grid points in y
+        # PDE parameters
+        source_strength=1.0,      # Source term strength
         dtype=np.float64,
     ):
         """
-        TODO: Replace this docstring with your PDE description
-        
-        Template:
-        Dataset for [EQUATION_NAME] simulations with [BOUNDARY_CONDITIONS].
-        Solves: [MATHEMATICAL_EQUATION_HERE]
+        Dataset for 2D Poisson equation simulations with Dirichlet boundary conditions.
+        Solves: -∇²u = f
         
         Args:
-            Lx: Domain length in x-direction
+            Lx: Domain width in x-direction
+            Ly: Domain height in y-direction
             Nx: Number of grid points in x-direction
-            [your_parameter]: Description of your PDE parameter
-            stop_sim_time: Final simulation time
-            timestep: Time step size
+            Ny: Number of grid points in y-direction
+            source_strength: Source term strength
             dtype: Data type for computations
         """
         super().__init__()
         
-        # TODO: Store your domain and grid parameters
+        # Store domain and grid parameters
         self.Lx = Lx
+        self.Ly = Ly
         self.Nx = Nx
+        self.Ny = Ny
         
-        # TODO: Store your PDE-specific parameters
-        # self.diffusion_coeff = diffusion_coeff
-        # self.wave_speed = wave_speed
-        # etc.
-        
-        # Store solver parameters
-        self.stop_sim_time = stop_sim_time
-        self.timestep = timestep
+        # Store PDE parameters
+        self.source_strength = source_strength
         self.dtype = dtype
         
-        # TODO: Setup your solver components
-        # Replace this section with your solver initialization
-        # 
-        # DEDALUS EXAMPLE (spectral methods):
-        # self.xcoord = d3.Coordinate("x")
-        # self.dist = d3.Distributor(self.xcoord, dtype=dtype)
-        # self.xbasis = d3.RealFourier(self.xcoord, size=Nx, bounds=(0, Lx))
-        # self.x = self.dist.local_grid(self.xbasis)
-        #
-        # FINITE DIFFERENCE EXAMPLE:
-        # self.x = np.linspace(0, Lx, Nx)
-        # self.dx = Lx / (Nx - 1)
-        #
-        # JAX EXAMPLE:
-        # self.x = jnp.linspace(0, Lx, Nx)
+        # Setup FEniCS mesh and function space
+        self.mesh = fe.RectangleMesh(fe.Point(0, 0), fe.Point(Lx, Ly), Nx-1, Ny-1)
+        self.V = fe.FunctionSpace(self.mesh, 'P', 1)
         
-        # TODO: Setup your PDE problem/operators
-        # Replace with your equation setup
-        #
-        # DEDALUS EXAMPLE:
-        # self.u = self.dist.Field(name="u", bases=self.xbasis)
-        # dx = lambda A: d3.Differentiate(A, self.xcoord)
-        # self.problem = d3.IVP([self.u], namespace=locals())
-        # self.problem.add_equation("dt(u) = diffusion_coeff*dx(dx(u))")  # Heat equation
-        #
-        # FINITE DIFFERENCE EXAMPLE:
-        # self.laplacian_matrix = self._build_laplacian_matrix()
-        #
-        # CUSTOM/JAX EXAMPLE:
-        # self.solve_step = jit(self._time_step)  # JIT compile your solver step
+        # Define boundary condition (u = 0 on boundary)
+        def boundary(x, on_boundary):
+            return on_boundary
         
-        # Placeholder - replace with your actual solver setup
-        self.x = np.linspace(0, Lx, Nx)  # Simple grid for template
+        self.bc = fe.DirichletBC(self.V, fe.Constant(0), boundary)
+        
+        # Get mesh coordinates
+        self.coordinates = self.V.tabulate_dof_coordinates()
 
     def __iter__(self):
         """
@@ -209,144 +152,60 @@ class YourDataset(IterableDataset):
         - Always end with: yield self.solve(initial_condition)
         """
         while True:
-            # TODO: Generate random initial condition
-            # Replace this section with your initial condition generation
-            #
-            # EXAMPLE PATTERNS:
-            #
-            # 1. GP-based smooth random fields:
-            # sigma = 0.2 * self.Lx
-            # gamma = 1 / (2 * sigma**2)  
-            # u_init = sample_gp_posterior(
-            #     kernel=partial(rbf_kernel, gamma=gamma),
-            #     X=np.array([0, self.Lx]), 
-            #     y=np.array([0, 0]),
-            #     xt=self.x.ravel(),
-            #     n_samples=1,
-            # )[0]
-            #
-            # 2. Random Fourier modes:
-            # n_modes = 5
-            # amplitudes = np.random.normal(0, 1, n_modes)
-            # phases = np.random.uniform(0, 2*np.pi, n_modes)
-            # u_init = sum(amp * np.sin(k * 2*np.pi*self.x/self.Lx + phase) 
-            #              for k, amp, phase in zip(range(1, n_modes+1), amplitudes, phases))
-            #
-            # 3. Physics-based initial conditions:
-            # center = np.random.uniform(0.2*self.Lx, 0.8*self.Lx)
-            # width = np.random.uniform(0.05*self.Lx, 0.2*self.Lx)
-            # amplitude = np.random.uniform(0.5, 2.0)
-            # u_init = amplitude * np.exp(-(self.x - center)**2 / width**2)
-            #
-            # 4. Random parameters with fixed shape:
-            # u_init = np.random.normal(0, 0.1, self.Nx)  # Random noise
+            # Generate random source term using GP
+            sigma = 0.2 * min(self.Lx, self.Ly)
+            gamma = 1 / (2 * sigma**2)
             
-            # PLACEHOLDER - Replace with your initial condition generation
-            u_init = np.random.normal(0, 0.1, self.Nx)  # Simple random noise
+            # Create GP-based smooth source term
+            source_amplitude = np.random.uniform(0.5, 2.0) * self.source_strength
+            f_source = sample_gp_prior(
+                kernel=partial(rbf_kernel, gamma=gamma),
+                X=self.coordinates,
+                n_samples=1,
+            )[0] * source_amplitude
             
-            # Solve the PDE and yield result (KEEP this line)
-            yield self.solve(u_init)
+            # Solve the PDE and yield result
+            yield self.solve(f_source)
 
-    def solve(self, initial_condition):
+    def solve(self, source_term):
         """
-        Solve the PDE for a given initial condition.
-        
-        INSTRUCTIONS FOR CLAUDE:
-        - KEEP this method signature exactly: solve(self, initial_condition)
-        - CUSTOMIZE the return dictionary to include all data useful for learning your PDE
-        - Common fields to include:
-          * Coordinates: spatial_coordinates, time_coordinates
-          * Solutions: u_trajectory, v_trajectory (for multiple fields)
-          * Initial/boundary conditions: u_initial, boundary_values
-          * Parameters: equation_parameters, solver_parameters
-          * Derivatives: u_x, u_xx, u_t (if useful for learning)
-          * Physical quantities: energy, momentum, vorticity, etc.
-        - Replace solver implementation with your PDE solver
+        Solve the Poisson equation for a given source term.
 
         Args:
-            initial_condition: Initial condition as a numpy array.
+            source_term: Source term f as a numpy array.
 
         Returns:
             A dictionary containing all data useful for learning the PDE.
         """
         
-        # TODO: Implement your PDE solver
-        # Replace this entire section with your time-stepping code
-        #
-        # DEDALUS EXAMPLE:
-        # self.u["g"] = initial_condition  # Set initial condition
-        # solver = self.problem.build_solver(self.timestepper)
-        # solver.stop_sim_time = self.stop_sim_time
-        # u_list = [self.u["g", 1].copy()]
-        # t_list = [solver.sim_time]
-        # while solver.proceed:
-        #     solver.step(self.timestep)
-        #     if solver.iteration % 25 == 0:  # Save every 25 steps
-        #         u_list.append(self.u["g", 1].copy())
-        #         t_list.append(solver.sim_time)
-        #
-        # FINITE DIFFERENCE EXAMPLE:
-        # u = initial_condition.copy()
-        # u_list = [u.copy()]
-        # t_list = [0.0]
-        # t = 0.0
-        # while t < self.stop_sim_time:
-        #     u = self._time_step(u, self.timestep)  # Your time step function
-        #     t += self.timestep
-        #     if len(t_list) % 25 == 0:  # Save every 25 steps
-        #         u_list.append(u.copy())
-        #         t_list.append(t)
+        # Set up FEniCS functions
+        u = fe.Function(self.V)
+        v = fe.TestFunction(self.V)
         
-        # PLACEHOLDER SOLVER - Replace with your actual implementation
-        n_steps = int(self.stop_sim_time / self.timestep)
-        u_list = []
-        t_list = []
-        u = initial_condition.copy()
+        # Create source function from array
+        f = fe.Function(self.V)
+        f.vector()[:] = source_term
         
-        for i in range(n_steps):
-            if i % 25 == 0:  # Save every 25 steps
-                u_list.append(u.copy())
-                t_list.append(i * self.timestep)
-            # Placeholder: just add small random perturbations (REPLACE THIS!)
-            u += np.random.normal(0, 0.001, u.shape) * self.timestep
+        # Define variational problem: -∇²u = f
+        # Weak form: ∫ ∇u·∇v dx = ∫ f·v dx
+        a = fe.dot(fe.grad(u), fe.grad(v)) * fe.dx
+        L = f * v * fe.dx
         
-        u_trajectory = np.array(u_list)
-        time_coordinates = np.array(t_list)
+        # Solve the linear system
+        fe.solve(a == L, u, self.bc)
+        
+        # Get solution as array
+        u_solution = u.vector().get_local()
 
-        # TODO: Customize this return dictionary for your PDE
-        # Include ALL data that would be useful for learning your PDE
-        #
-        # EXAMPLES of useful data to include:
         return {
-            # Coordinates (almost always needed)
-            "spatial_coordinates": self.x.ravel(),  # Spatial grid
-            "time_coordinates": time_coordinates,   # Time points
+            # Coordinates
+            "spatial_coordinates": self.coordinates,  # Shape: (N, 2) for 2D
             
-            # Solution fields (customize field names for your PDE)
-            "u_initial": initial_condition,         # Initial condition
-            "u_trajectory": u_trajectory,           # Primary solution field
-            # "v_trajectory": v_trajectory,         # Secondary field (e.g., velocity in Navier-Stokes)
-            # "p_trajectory": p_trajectory,         # Pressure field
+            # Solution and source
+            "u_solution": u_solution,
+            "source_term": source_term,
             
-            # PDE parameters (useful for learning parameter dependencies)
-            # "diffusion_coeff": self.diffusion_coeff,
-            # "wave_speed": self.wave_speed,
-            # "reynolds_number": self.reynolds_number,
-            
-            # Derivatives (if useful for learning the PDE structure)
-            # "u_x": u_x_trajectory,                # Spatial derivatives
-            # "u_xx": u_xx_trajectory, 
-            # "u_t": u_t_trajectory,                # Time derivative
-            
-            # Physical quantities (if relevant)
-            # "energy": energy_trajectory,          # Total energy over time
-            # "momentum": momentum_trajectory,      # Momentum conservation
-            # "vorticity": vorticity_trajectory,    # For fluid dynamics
-            
-            # Boundary conditions (if non-trivial)
-            # "boundary_left": left_bc_trajectory,
-            # "boundary_right": right_bc_trajectory,
-            
-            # Source terms (if present)
-            # "source_term": source_trajectory,
+            # PDE parameters
+            "source_strength": self.source_strength,
+            "domain_size": [self.Lx, self.Ly],
         }

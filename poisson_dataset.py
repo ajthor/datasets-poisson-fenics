@@ -11,7 +11,12 @@ zero boundary conditions and random source distributions.
 import numpy as np
 from torch.utils.data import IterableDataset
 
-import fenics as fe
+import ufl
+import numpy
+from mpi4py import MPI
+from petsc4py import PETSc
+from dolfinx import mesh, fem, io
+from dolfinx.fem.petsc import LinearProblem
 from functools import partial
 from sklearn.metrics.pairwise import rbf_kernel
 import logging
@@ -21,13 +26,7 @@ logger = logging.getLogger(__name__)
 
 def sample_gp_prior(kernel, X, n_samples=1):
     """
-    Sample from Gaussian Process prior - KEEP if using GP-based initial conditions.
-    
-    INSTRUCTIONS FOR CLAUDE:
-    - This function samples from GP prior (zero mean) for random smooth fields
-    - REMOVE this function if your dataset doesn't use GP sampling  
-    - KEEP for generating smooth random initial conditions
-    - Requires a kernel function (e.g., from sklearn.metrics.pairwise.rbf_kernel)
+    Sample from Gaussian Process prior for random smooth fields.
     """
     if X.ndim == 1:
         X = X.reshape(-1, 1)
@@ -45,13 +44,7 @@ def sample_gp_prior(kernel, X, n_samples=1):
 
 def sample_gp_posterior(kernel, X, y, xt, n_samples=1):
     """
-    Sample from Gaussian Process posterior - KEEP if using GP-based initial conditions.
-
-    INSTRUCTIONS FOR CLAUDE:
-    - This function is commonly used across datasets for smooth random initial conditions
-    - REMOVE this function if your dataset doesn't use GP sampling
-    - KEEP if you want smooth, correlated random fields as initial conditions
-    - Requires sklearn.metrics.pairwise.rbf_kernel import (or similar kernel function)
+    Sample from Gaussian Process posterior for smooth random fields.
     """
     if X.ndim == 1:
         X = X.reshape(-1, 1)
@@ -81,12 +74,6 @@ def sample_gp_posterior(kernel, X, y, xt, n_samples=1):
 
     return posterior
 
-
-# TODO: Add additional utility functions as needed for your specific PDE
-# Common examples:
-# - Vortex generation functions for fluid dynamics
-# - Wave packet generators for wave equations
-# - Heat source/sink generators for thermal problems
 
 
 class PoissonDataset(IterableDataset):
@@ -129,27 +116,21 @@ class PoissonDataset(IterableDataset):
         self.source_strength = source_strength
         self.dtype = dtype
         
-        # Setup FEniCS mesh and function space
-        self.mesh = fe.RectangleMesh(fe.Point(0, 0), fe.Point(Lx, Ly), Nx-1, Ny-1)
-        self.V = fe.FunctionSpace(self.mesh, 'P', 1)
+        # Create DOLFINx mesh and function space
+        self.domain = mesh.create_rectangle(
+            MPI.COMM_WORLD, 
+            [(0.0, 0.0), (Lx, Ly)], 
+            [Nx-1, Ny-1],
+            cell_type=mesh.CellType.triangle
+        )
+        self.V = fem.functionspace(self.domain, ("Lagrange", 1))
         
-        # Define boundary condition (u = 0 on boundary)
-        def boundary(x, on_boundary):
-            return on_boundary
-        
-        self.bc = fe.DirichletBC(self.V, fe.Constant(0), boundary)
-        
-        # Get mesh coordinates
+        # Get DOF coordinates
         self.coordinates = self.V.tabulate_dof_coordinates()
 
     def __iter__(self):
         """
         Generate infinite samples from the dataset.
-        
-        INSTRUCTIONS FOR CLAUDE:
-        - KEEP this method signature and infinite loop structure
-        - Replace the initial condition generation with your method
-        - Always end with: yield self.solve(initial_condition)
         """
         while True:
             # Generate random source term using GP
@@ -178,24 +159,34 @@ class PoissonDataset(IterableDataset):
             A dictionary containing all data useful for learning the PDE.
         """
         
-        # Set up FEniCS functions
-        u = fe.Function(self.V)
-        v = fe.TestFunction(self.V)
+        # Define trial and test functions
+        u = ufl.TrialFunction(self.V)
+        v = ufl.TestFunction(self.V)
         
         # Create source function from array
-        f = fe.Function(self.V)
-        f.vector()[:] = source_term
+        f = fem.Function(self.V)
+        f.x.array[:] = source_term
         
         # Define variational problem: -∇²u = f
         # Weak form: ∫ ∇u·∇v dx = ∫ f·v dx
-        a = fe.dot(fe.grad(u), fe.grad(v)) * fe.dx
-        L = f * v * fe.dx
+        a = ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx
+        L = f * v * ufl.dx
         
-        # Solve the linear system
-        fe.solve(a == L, u, self.bc)
+        # Apply homogeneous Dirichlet boundary conditions on all boundaries
+        def boundary_marker(x):
+            return numpy.full(x.shape[1], True, dtype=bool)
+        
+        fdim = self.domain.topology.dim - 1
+        boundary_facets = mesh.locate_entities_boundary(self.domain, fdim, boundary_marker)
+        boundary_dofs = fem.locate_dofs_topological(self.V, fdim, boundary_facets)
+        bc = fem.dirichletbc(PETSc.ScalarType(0.0), boundary_dofs, self.V)
+        
+        # Solve the linear problem
+        problem = LinearProblem(a, L, bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"})
+        uh = problem.solve()
         
         # Get solution as array
-        u_solution = u.vector().get_local()
+        u_solution = uh.x.array.copy()
 
         return {
             # Coordinates

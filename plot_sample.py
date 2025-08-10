@@ -27,32 +27,35 @@ def plot_poisson_sample(sample, save_path="sample_plot.png"):
     source = sample["source_term"]   # Shape: (N,)
     domain_size = sample["domain_size"]  # [Lx, Ly]
     
-    # Create scatter plots since we have unstructured mesh data
+    # Create regular grid for imshow plotting
+    from scipy.interpolate import griddata
+    
+    # Define grid resolution
+    grid_size = 64
+    x_grid = np.linspace(0, domain_size[0], grid_size)
+    y_grid = np.linspace(0, domain_size[1], grid_size)
+    X_grid, Y_grid = np.meshgrid(x_grid, y_grid)
+    
+    # Interpolate scattered data onto regular grid
+    coords_2d = coordinates[:, :2]  # Use only x,y coordinates
+    source_grid = griddata(coords_2d, source, (X_grid, Y_grid), method='linear', fill_value=0)
+    solution_grid = griddata(coords_2d, solution, (X_grid, Y_grid), method='linear', fill_value=0)
+    
     # Plot 1: Source term f(x,y)
-    scatter1 = ax1.scatter(
-        coordinates[:, 0], coordinates[:, 1], 
-        c=source, cmap="RdBu_r", s=1, rasterized=True
-    )
+    im1 = ax1.imshow(source_grid, extent=[0, domain_size[0], 0, domain_size[1]], 
+                     origin='lower', cmap="RdBu_r", aspect='equal')
     ax1.set_xlabel("x")
     ax1.set_ylabel("y") 
     ax1.set_title("Source Term f(x,y)")
-    ax1.set_aspect("equal")
-    ax1.set_xlim(0, domain_size[0])
-    ax1.set_ylim(0, domain_size[1])
-    plt.colorbar(scatter1, ax=ax1, label="f(x,y)")
+    plt.colorbar(im1, ax=ax1, label="f(x,y)")
     
     # Plot 2: Solution field u(x,y)
-    scatter2 = ax2.scatter(
-        coordinates[:, 0], coordinates[:, 1],
-        c=solution, cmap="viridis", s=1, rasterized=True
-    )
+    im2 = ax2.imshow(solution_grid, extent=[0, domain_size[0], 0, domain_size[1]], 
+                     origin='lower', cmap="viridis", aspect='equal')
     ax2.set_xlabel("x")
     ax2.set_ylabel("y")
     ax2.set_title("Solution u(x,y)")
-    ax2.set_aspect("equal")
-    ax2.set_xlim(0, domain_size[0])
-    ax2.set_ylim(0, domain_size[1])
-    plt.colorbar(scatter2, ax=ax2, label="u(x,y)")
+    plt.colorbar(im2, ax=ax2, label="u(x,y)")
     
     plt.suptitle("2D Poisson Equation: -∇²u = f", fontsize=14)
     plt.tight_layout()
